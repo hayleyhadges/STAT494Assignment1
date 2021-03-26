@@ -1,0 +1,328 @@
+---
+title: 'Assignment #1'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r libraries}
+library(tidyverse)         # for graphing and data cleaning
+library(tidymodels)        # for modeling
+library(naniar)            # for analyzing missing values
+library(vip)               # for variable importance plots
+theme_set(theme_minimal()) # Lisa's favorite theme
+```
+
+```{r data}
+hotels <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-11/hotels.csv')
+```
+
+
+When you finish the assignment, remove the `#` from the options chunk at the top, so that messages and warnings aren't printed. If you are getting errors in your code, add `error = TRUE` so that the file knits. I would recommend not removing the `#` until you are completely finished.
+
+## Setting up Git and GitHub in RStudio
+
+Read the [Quick Intro](https://advanced-ds-in-r.netlify.app/posts/2021-01-28-gitgithub/#quick-intro) section of the Using git and GitHub in R Studio set of Course Materials. Set up Git and GitHub and create a GitHub repo and associated R Project (done for you when you clone the repo) for this homework assignment. Put this file into the project. You should always open the R Project (.Rproj) file when you work with any of the files in the project. 
+
+**Task**: Below, post a link to your GitHub repository.
+
+[GitHub Repo](https://github.com/hayleyhadges/STAT494Assignment1)
+
+## Creating a website
+
+You'll be using RStudio to create a personal website to showcase your work from this class! Start by watching the [Sharing on Short Notice](https://rstudio.com/resources/webinars/sharing-on-short-notice-how-to-get-your-materials-online-with-r-markdown/) webinar by Alison Hill and Desirée De Leon of RStudio. This should help you choose the type of website you'd like to create. 
+
+Once you've chosen that, you might want to look through some of the other *Building a website* resources I posted on the [resources page](https://advanced-ds-in-r.netlify.app/resources.html) of our course website. I highly recommend making a nice landing page where you give a brief introduction of yourself. 
+
+
+**Tasks**:
+
+* Include a link to your website below. (If anyone does not want to post a website publicly, please talk to me and we will find a different solution).  
+
+[Portfolio Site](https://hayleyhadges.netlify.app/)
+
+* Listen to at least the first 20 minutes of "Building a Career in Data Science, Chapter 4: Building a Portfolio". Go to the main [podcast website](https://podcast.bestbook.cool/) and navigate to a podcast provider that works for you to find that specific episode. Write 2-3 sentences reflecting on what they discussed and why creating a website might be helpful for you.  
+
+Portfolios are about showing off the data science skills one has by showing ones code, process, and results, which is similar to the type of portfolio a student might submit to an art school. These portfolios can show exactly what beginner data scientists can do (do they meet minimum skill requirement?), and work in place of concrete work experience when applying to a first job. A portfolio is also good to enter into the data science community and begin building your own brand.
+
+
+* (Optional) Create an R package with your own customized `gpplot2` theme! Write a post on your website about why you made the choices you did for the theme. See the *Building an R package* and *Custom `ggplot2` themes* [resources](https://advanced-ds-in-r.netlify.app/resources.html). 
+
+## Machine Learning review and intro to `tidymodels`
+
+Read through and follow along with the [Machine Learning review with an intro to the `tidymodels` package](https://advanced-ds-in-r.netlify.app/posts/2021-03-16-ml-review/) posted on the Course Materials page. 
+
+**Tasks**:
+
+1. Read about the hotel booking data, `hotels`, on the [Tidy Tuesday page](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-02-11/readme.md) it came from. There is also a link to an article from the original authors. The outcome we will be predicting is called `is_canceled`. 
+  - Without doing any analysis, what are some variables you think might be predictive and why?  
+  
+  previous_cancellations: customers with a higher number of previous cancellations could be more likely to cancel.
+  
+  deposit_type: customers who made a non-refundable deposit may be less likely to cancel
+  
+  booking_changes: if there are many booking changes, it could make cancellation more likely
+  
+  lead_time: the longer the lead time the more time to cancel
+  
+  _ What are some problems that might exist with the data? You might think about how it was collected and who did the collecting.  
+  
+  
+  The data comes from two hotels in Portugal, so the data could be biased in the sense that it only includes two hotels from the same country.
+  
+  - If we construct a model, what type of conclusions will be able to draw from it?  
+  
+  By constructing models we could find if any of the given variables are important predictors for hotel cancellations, and make a prediction based on these variables whether future guests will or will not cancel their bookings.
+  
+2. Create some exploratory plots or table summaries of the data, concentrating most on relationships with the response variable. Keep in mind the response variable is numeric, 0 or 1. You may want to make it categorical (you also may not). Be sure to also examine missing values or other interesting values.  
+
+```{r}
+hotels %>% 
+  group_by(is_canceled, hotel) %>% 
+  summarise(avg_cancellations = mean(previous_cancellations),
+            avg_changes = mean(booking_changes),
+            avg_lead_time = mean(lead_time),
+            avg_repeat = mean(is_repeated_guest))
+
+hotels %>% 
+  group_by(is_canceled) %>% 
+  count(deposit_type)
+
+hotels %>% 
+ select(everything()) %>% 
+  summarise_all(funs(sum(is.na(.))))
+```
+
+3. First, we will do a couple things to get the data ready, including making the outcome a factor (needs to be that way for logistic regression), removing the year variable and some reservation status variables, and removing missing values (not NULLs but true missing values). Split the data into a training and test set, stratifying on the outcome variable, `is_canceled`. Since we have a lot of data, we're going to split the data 50/50 between training and test. I have already `set.seed()` for you. Be sure to use `hotels_mod` in the splitting.
+
+```{r}
+hotels_mod <- hotels %>% 
+  mutate(is_canceled = as.factor(is_canceled)) %>% 
+  mutate(across(where(is.character), as.factor)) %>% 
+  select(-arrival_date_year,
+         -reservation_status,
+         -reservation_status_date) %>% 
+  add_n_miss() %>% 
+  filter(n_miss_all == 0) %>% 
+  select(-n_miss_all)
+
+set.seed(494)
+
+h_split <- initial_split(hotels_mod, 
+                             prop = .5, strata = is_canceled)
+h_train <- training(h_split)
+h_test <- testing(h_split)
+```
+
+4. In this next step, we are going to do the pre-processing. Usually, I won't tell you exactly what to do here, but for your first exercise, I'll tell you the steps. 
+
+* Set up the recipe with `is_canceled` as the outcome and all other variables as predictors (HINT: `~.`).  
+* Use a `step_XXX()` function or functions (I think there are other ways to do this, but I found `step_mutate_at()` easiest) to create some indicator variables for the following variables: `children`, `babies`, and `previous_cancellations`. So, the new variable should be a 1 if the original is more than 0 and 0 otherwise. Make sure you do this in a way that accounts for values that may be larger than any we see in the dataset.  
+* For the `agent` and `company` variables, make new indicator variables that are 1 if they have a value of `NULL` and 0 otherwise. 
+* Use `fct_lump_n()` to lump together countries that aren't in the top 5 most occurring. 
+* If you used new names for some of the new variables you created, then remove any variables that are no longer needed. 
+* Use `step_normalize()` to center and scale all the non-categorical predictor variables. (Do this BEFORE creating dummy variables. When I tried to do it after, I ran into an error - I'm still investigating why.)
+* Create dummy variables for all factors/categorical predictor variables (make sure you have `-all_outcomes()` in this part!!).  
+* Use the `prep()` and `juice()` functions to apply the steps to the training data just to check that everything went as planned.
+
+```{r}
+h_recipe <- recipe(is_canceled ~ ., 
+                       data = h_train) %>% 
+  step_mutate(nchildren =  ifelse(children == 0, 0, 1),
+              babies = ifelse(babies == 0, 0, 1),
+              previous_cancellations =  ifelse(previous_cancellations == 0, 0, 1),
+              agent = ifelse(agent == "NULL", 1, 0),
+              company = ifelse(company == "NULL", 1, 0),
+              country = fct_lump_n(country, 5))%>% 
+  step_normalize(all_numeric()) %>% 
+  step_dummy(all_nominal(), 
+             -all_outcomes())
+
+
+h_recipe %>% 
+  prep(h_train) %>%
+  juice() 
+```
+
+5. In this step we will set up a LASSO model and workflow.
+
+* In general, why would we want to use LASSO instead of regular logistic regression? (HINT: think about what happens to the coefficients). 
+
+
+Using a lasso model, variables can go to 0 so it can simplify the model, and with so many variables this is very helfpul.
+
+* Define the model type, set the engine, set the `penalty` argument to `tune()` as a placeholder, and set the mode.  
+
+```{r}
+h_lasso_mod <- 
+  logistic_reg(mixture = 1) %>% 
+  set_engine("glmnet",family = "binomial") %>% 
+  set_args(penalty = tune()) %>% 
+  set_mode("classification")
+```
+
+* Create a workflow with the recipe and model.  
+
+```{r}
+h_lasso_wf <- 
+  workflow() %>% 
+  add_recipe(h_recipe) %>% 
+  add_model(h_lasso_mod)
+```
+
+6. In this step, we'll tune the model and fit the model using the best tuning parameter to the entire training dataset.
+
+* Create a 5-fold cross-validation sample. We'll use this later. I have set the seed for you. 
+
+```{r}
+set.seed(494) # for reproducibility
+h_cv <- vfold_cv(h_train, v = 5)
+```
+
+* Use the `grid_regular()` function to create a grid of 10 potential penalty parameters (we're keeping this sort of small because the dataset is pretty large). Use that with the 5-fold cv data to tune the model.  
+
+```{r}
+penalty_grid <- grid_regular(penalty(),
+                             levels = 10)
+```
+
+* Use the `tune_grid()` function to fit the models with different tuning parameters to the different cross-validation sets.  
+
+```{r}
+h_lasso_tune <- 
+  h_lasso_wf %>% 
+  tune_grid(
+    resamples = h_cv,
+    grid = penalty_grid
+    )
+```
+
+```{r}
+h_lasso_tune%>% 
+  collect_metrics() %>% 
+  filter(.metric == "accuracy")
+```
+
+* Use the `collect_metrics()` function to collect all the metrics from the previous step and create a plot with the accuracy on the y-axis and the penalty term on the x-axis. Put the x-axis on the log scale.  
+
+```{r}
+h_lasso_tune %>% 
+  collect_metrics() %>% 
+  filter(.metric == "accuracy") %>% 
+  ggplot(aes(x = penalty, y = mean)) +
+  geom_point() +
+  geom_line() +
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10",scales::math_format(10^.x))) +
+  labs(x = "penalty", y = "accuracy", title = "Penalty Accuracy")
+```
+
+* Use the `select_best()` function to find the best tuning parameter, fit the model using that tuning parameter to the entire training set (HINT: `finalize_workflow()` and `fit()`), and display the model results using `pull_workflow_fit()` and `tidy()`. Are there some variables with coefficients of 0?
+
+babies, arrival_date_month_October, market_segment_Corporate, market_segment_Groups, market_segment_Undefined, distribution_channel_Undefined, and assigned_room_type_P go to 0. I noticed that some of the variables that go to 0 in this rmarkdown are different than the variables that go to 0 from the knitted file, I included the variables that went to 0 in my markdown file. 
+
+```{r}
+best_param <- h_lasso_tune %>% 
+  select_best(metric = "accuracy")
+
+h_lasso_final_wf <- h_lasso_wf %>% 
+  finalize_workflow(best_param)
+
+h_lasso_final_mod <- h_lasso_final_wf %>% 
+  fit(data = h_train)
+
+h_lasso_final_mod %>% 
+  pull_workflow_fit() %>% 
+  tidy() 
+```
+
+
+7. Now that we have a model, let's evaluate it a bit more. All we have looked at so far is the cross-validated accuracy from the previous step. 
+
+* Create a variable importance graph. Which variables show up as the most important? Are you surprised? 
+
+I'm very surprised about which variables were the most important, such as specific reserved and assigned room type. The non refundable deposit type is the only variable I thought would be important to make it onto this.
+
+```{r}
+h_lasso_final_mod %>% 
+  pull_workflow_fit() %>% 
+  vip()
+```
+
+* Use the `last_fit()` function to fit the final model and then apply it to the testing data. Report the metrics from the testing data using the `collet_metrics()` function. How do they compare to the cross-validated metrics?
+
+With an accuracy of 0.8151375, this final testing accuracy matches up well with the cross-validated accuracy, which mostly stayed around 0.81.
+
+```{r}
+h_lasso_test <- h_lasso_final_wf %>% 
+  last_fit(h_split)
+
+h_lasso_test %>% 
+  collect_metrics() %>% 
+  filter(.metric == "accuracy")
+```
+
+* Use the `collect_predictions()` function to find the predicted probabilities and classes for the test data. Save this to a new dataset called `preds`. Then, use the `conf_mat()` function from `dials` (part of `tidymodels`) to create a confusion matrix showing the predicted classes vs. the true classes. What is the true positive rate (sensitivity)? What is the true negative rate (specificity)? See this [Wikipedia](https://en.wikipedia.org/wiki/Confusion_matrix) reference if you (like me) tend to forget these definitions.
+
+Sensitivity: 0.6459 0.9147
+
+Specificity: 0.9147
+
+```{r}
+preds <-
+  collect_predictions(h_lasso_test) 
+preds
+conf_mat(data = preds, estimate = .pred_class, truth = is_canceled)
+```
+
+* Use the `preds` dataset you just created to create a density plot of the predicted probabilities of canceling (the variable is called `.pred_1`), filling by `is_canceled`. Use an `alpha = .5` and `color = NA` in the `geom_density()`. Answer these questions: 
+
+a. What would this graph look like for a model with an accuracy that was close to 1? 
+
+The line between the two fills would be more vertical.
+
+b. Our predictions are classified as canceled if their predicted probability of canceling is greater than .5. If we wanted to have a high true positive rate, should we make the cutoff for predicted as canceled higher or lower than .5? 
+
+We should make the cutoff lower than 0.5.
+
+c. What happens to the true negative rate if we try to get a higher true positive rate? 
+
+The true negative rate would lower.
+
+
+```{r}
+ggplot(preds, aes(x = .pred_1, fill = is_canceled)) +
+  geom_density(position = "fill", alpha = 0.5, color = NA)
+```
+
+8. Let's say that this model is going to be applied to bookings 14 days in advance of their arrival at each hotel, and someone who works for the hotel will make a phone call to the person who made the booking. During this phone call, they will try to assure that the person will be keeping their reservation or that they will be canceling in which case they can do that now and still have time to fill the room. How should the hotel go about deciding who to call? How could they measure whether it was worth the effort to do the calling? Can you think of another way they might use the model? 
+
+Since the specificity isn't great, I would call the customers whose pred_1 value is 0.75 or greater (not 0.5 or greater), raising the cutoff should increase the true negative rate and lowers the amount of calls that need to be made. After making the calls, they can measure the false positive and negative rates (count how many called customers did not cancel their booking and how many customers who weren't called canceled their booking) and change the pred_1 cutoff based on that. 
+
+
+9. How might you go about questioning and evaluating the model in terms of fairness? Are there any questions you would like to ask of the people who collected the data? 
+
+If customers found out that the hotels call people they deem more likely to cancel their booking, they could take offense to receiving those calls. The country_PRT variable that has importance in the model might also need to be addressed, as there could be a form of bias behind it. If I could ask any questions of the people who collected the data, I would want to know why they chose the variables they did and if there were any they considered but decided against using, and ask why they decided that. 
+
+
+
+
+## Bias and Fairness
+
+Listen to Dr. Rachel Thomas's  [Bias and Fairness lecture](https://ethics.fast.ai/videos/?lesson=2). Write a brief paragraph reflecting on it. You might also be interested in reading the [ProPublica article](https://www.propublica.org/article/machine-bias-risk-assessments-in-criminal-sentencing) Dr. Thomas references about using a tool called COMPAS to predict recidivism. Some questions/ideas you might keep in mind:
+
+* Did you hear anything that surprised you?  
+* Why is it important that we pay attention to bias and fairness when studying data science?  
+* Is there a type of bias Dr. Thomas discussed that was new to you? Can you think about places you have seen these types of biases?
+
+
+I think it's important for data science students and even senior data scientists to become more aware of the impact we can have on real lives with the work we do. I heard before a little about the facial recognition issues, but never thought much about how algorithms like these can have such wide-spread use and therefore wide-spread harm. In regards to the recidivism algorithm issue--I was surprised that they did not include race as an input, and even though there were obvious issues regarding the accuracy of predictions between races they did not update their algorithm. Overall, there's so many things to take into consideration in this field in terms of bias and fairness, and I think the best we can do it try to educate ourselves and seek out help from domain experts or the people impacted if we think we could be missing something. If the people building these models and algorithms aren't aware of its bias issues, what hope does the public have for awareness? Especially considering the mass belief that algorithms are error-free or objective. I thought it was interesting to see the supposed strongest predictors for stroke and the measurement bias. I think it's sometimes easy to look at data and results at face value and leave it at that, but then you miss what the data might truly be missing or showing between the lines. A good lesson from this is to always question your results and think through the different possible biases that could be present.
+
